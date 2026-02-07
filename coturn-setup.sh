@@ -124,6 +124,93 @@ check_os() {
     fi
 }
 
+# Spinner for long-running tasks
+spinner() {
+    local pid=$1
+    local msg="$2"
+    local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+    local i=0
+
+    while kill -0 "$pid" 2>/dev/null; do
+        echo -ne "\r  ${CYAN}${frames[$i]}${NC}  ${msg}" >/dev/tty
+        i=$(( (i + 1) % ${#frames[@]} ))
+        sleep 0.1
+    done
+
+    wait "$pid"
+    local exit_code=$?
+    echo -ne "\r\033[K" >/dev/tty
+    return $exit_code
+}
+
+# Run command with spinner
+run_with_spinner() {
+    local msg="$1"
+    shift
+    "$@" >/dev/null 2>&1 &
+    local pid=$!
+    spinner "$pid" "$msg"
+    return $?
+}
+
+# Progress bar
+progress_bar() {
+    local current=$1
+    local total=$2
+    local label="$3"
+    local width=30
+    local pct=$((current * 100 / total))
+    local filled=$((current * width / total))
+    local empty=$((width - filled))
+    local bar=""
+
+    for ((i=0; i<filled; i++)); do bar+="█"; done
+    for ((i=0; i<empty; i++)); do bar+="░"; done
+
+    echo -ne "\r  ${CYAN}[${bar}]${NC} ${pct}%  ${DIM}${label}${NC}  " >/dev/tty
+}
+
+# Installation step with progress
+install_step() {
+    local step=$1
+    local total=$2
+    local label="$3"
+    shift 3
+
+    progress_bar "$step" "$total" "$label"
+    "$@" >/dev/null 2>&1 &
+    local pid=$!
+
+    local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+    local i=0
+    while kill -0 "$pid" 2>/dev/null; do
+        local pct=$((step * 100 / total))
+        local width=30
+        local filled=$((step * width / total))
+        local empty=$((width - filled))
+        local bar=""
+        for ((j=0; j<filled; j++)); do bar+="█"; done
+        for ((j=0; j<empty; j++)); do bar+="░"; done
+        echo -ne "\r  ${CYAN}[${bar}]${NC} ${pct}%  ${frames[$i]} ${label}  " >/dev/tty
+        i=$(( (i + 1) % ${#frames[@]} ))
+        sleep 0.1
+    done
+
+    wait "$pid"
+    local exit_code=$?
+    echo -ne "\r\033[K" >/dev/tty
+
+    if [ $exit_code -eq 0 ]; then
+        progress_bar "$step" "$total" ""
+        echo "" >/dev/tty
+        ok "$label"
+    else
+        fail "$label — ${RED}FAILED${NC}"
+    fi
+
+    return $exit_code
+}
+
 # ──────────────────────────────────────────────
 # Pre-flight
 # ──────────────────────────────────────────────
@@ -288,41 +375,38 @@ echo -e "${CYAN}═════════════════════�
 echo -e "${BOLD}  Starting Installation...${NC}"
 echo -e "${CYAN}══════════════════════════════════════════════════════${NC}"
 
+TOTAL_STEPS=8
+echo ""
+
 # 1. Update
-print_step "[1/8] Updating system packages..."
-apt update -y >/dev/null 2>&1 && apt upgrade -y >/dev/null 2>&1
-ok "System updated"
+install_step 1 $TOTAL_STEPS "Updating system packages" bash -c "apt update -y && apt upgrade -y"
 
 # 2. Install
-print_step "[2/8] Installing CoTURN..."
-apt install -y coturn >/dev/null 2>&1
-ok "CoTURN installed"
+install_step 2 $TOTAL_STEPS "Installing CoTURN" apt install -y coturn
 
 # 3. Enable
-print_step "[3/8] Enabling CoTURN service..."
+progress_bar 3 $TOTAL_STEPS "Enabling service"
 sed -i 's/#TURNSERVER_ENABLED=1/TURNSERVER_ENABLED=1/' /etc/default/coturn 2>/dev/null || true
+echo "" >/dev/tty
 ok "CoTURN service enabled"
 
 # 4. SSL
-print_step "[4/8] Configuring SSL certificate..."
+progress_bar 4 $TOTAL_STEPS "Configuring SSL"
 if [ "$GENERATE_CERT" = "yes" ]; then
     openssl req -x509 -nodes -days 3650 \
         -newkey rsa:2048 \
         -keyout "$KEY_FILE" \
         -out "$CERT_FILE" \
         -subj "/CN=$SERVER_IP" 2>/dev/null
-    ok "Self-signed certificate generated (valid 10 years)"
-else
-    ok "Using existing certificate"
 fi
-
 chown turnserver:turnserver "$CERT_FILE" "$KEY_FILE" 2>/dev/null || true
 chmod 644 "$CERT_FILE"
 chmod 600 "$KEY_FILE"
-ok "Certificate permissions configured"
+echo "" >/dev/tty
+ok "SSL certificate configured"
 
 # 5. Config
-print_step "[5/8] Writing configuration..."
+progress_bar 5 $TOTAL_STEPS "Writing configuration"
 [ -f /etc/turnserver.conf ] && cp /etc/turnserver.conf "/etc/turnserver.conf.bak.$(date +%s)"
 
 cat > /etc/turnserver.conf << EOF
@@ -378,39 +462,44 @@ pidfile=/var/run/turnserver.pid
 mobility
 log-binding
 EOF
-
+echo "" >/dev/tty
 ok "Configuration written to /etc/turnserver.conf"
 
 # 6. Log
-print_step "[6/8] Setting up logging..."
+progress_bar 6 $TOTAL_STEPS "Setting up logging"
 touch /var/log/turnserver.log
 chown turnserver:turnserver /var/log/turnserver.log
-ok "Log file ready at /var/log/turnserver.log"
+echo "" >/dev/tty
+ok "Log file ready"
 
 # 7. Firewall
-print_step "[7/8] Configuring firewall (UFW)..."
-apt install -y ufw >/dev/null 2>&1
-
-ufw default deny incoming >/dev/null 2>&1
-ufw default allow outgoing >/dev/null 2>&1
-
-ufw allow 22/tcp >/dev/null 2>&1
-ufw allow "$TURN_PORT/tcp" >/dev/null 2>&1
-ufw allow "$TURN_PORT/udp" >/dev/null 2>&1
-ufw allow "$TLS_PORT/tcp" >/dev/null 2>&1
-ufw allow "$TLS_PORT/udp" >/dev/null 2>&1
-ufw allow "${MIN_PORT}:${MAX_PORT}/udp" >/dev/null 2>&1
-ufw allow "${MIN_PORT}:${MAX_PORT}/tcp" >/dev/null 2>&1
-
-echo "y" | ufw enable >/dev/null 2>&1
-ok "Firewall rules applied"
+progress_bar 7 $TOTAL_STEPS "Configuring firewall"
+echo "" >/dev/tty
+install_step 7 $TOTAL_STEPS "Configuring firewall (UFW)" bash -c "
+    apt install -y ufw >/dev/null 2>&1
+    ufw default deny incoming >/dev/null 2>&1
+    ufw default allow outgoing >/dev/null 2>&1
+    ufw allow 22/tcp >/dev/null 2>&1
+    ufw allow $TURN_PORT/tcp >/dev/null 2>&1
+    ufw allow $TURN_PORT/udp >/dev/null 2>&1
+    ufw allow $TLS_PORT/tcp >/dev/null 2>&1
+    ufw allow $TLS_PORT/udp >/dev/null 2>&1
+    ufw allow ${MIN_PORT}:${MAX_PORT}/udp >/dev/null 2>&1
+    ufw allow ${MIN_PORT}:${MAX_PORT}/tcp >/dev/null 2>&1
+    echo y | ufw enable >/dev/null 2>&1
+"
 
 # 8. Start
-print_step "[8/8] Starting CoTURN..."
+progress_bar 8 $TOTAL_STEPS "Starting CoTURN"
 systemctl enable coturn >/dev/null 2>&1
 systemctl restart coturn
 sleep 3
+echo "" >/dev/tty
 ok "CoTURN started"
+
+# Final progress
+progress_bar $TOTAL_STEPS $TOTAL_STEPS "Complete"
+echo "" >/dev/tty
 
 # ══════════════════════════════════════════════
 # VERIFICATION
