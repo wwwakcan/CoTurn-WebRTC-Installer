@@ -1,4 +1,4 @@
-# 🌐 CoTurn Install Script for Ubuntu
+# 🌐 CoTurn WebRTC Installer
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-20.04%20|%2022.04%20|%2024.04-orange?logo=ubuntu)](https://ubuntu.com)
