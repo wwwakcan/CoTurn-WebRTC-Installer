@@ -1,8 +1,9 @@
 #!/bin/bash
 # ============================================================
-# Fast CoTURN Server Install Script for Ubuntu
-# https://github.com/wwwakcan/CoTurn-Install-Script
+# CoTurn WebRTC Installer v1.0.0
+# https://github.com/wwwakcan/CoTurn-WebRTC-Installer
 #
+# Fast, interactive STUN/TURN server setup for WebRTC
 # Supports: Ubuntu 20.04 / 22.04 / 24.04
 # License: MIT
 # ============================================================
@@ -40,11 +41,11 @@ print_banner() {
     echo -e "${CYAN}"
     echo "  ╔══════════════════════════════════════════════════╗"
     echo "  ║                                                  ║"
-    echo "  ║       🌐  CoTURN Server Setup Wizard  🌐        ║"
+    echo "  ║     🌐  CoTurn WebRTC Installer  v${VERSION}  🌐    ║"
     echo "  ║                                                  ║"
     echo "  ║    STUN/TURN Server for WebRTC Applications      ║"
     echo "  ║                                                  ║"
-    echo -e "  ║    ${DIM}v${VERSION}${CYAN}                                          ║"
+    echo -e "  ║  ${DIM}github.com/wwwakcan/CoTurn-WebRTC-Installer${CYAN}    ║"
     echo "  ╚══════════════════════════════════════════════════╝"
     echo -e "${NC}"
 }
@@ -60,32 +61,33 @@ ok()    { echo -e "  ${GREEN}✔${NC}  $1"; }
 warn()  { echo -e "  ${YELLOW}⚠${NC}  $1"; }
 fail()  { echo -e "  ${RED}✖${NC}  $1"; }
 
+# Read from /dev/tty so it works even when piped via curl | bash
 ask() {
     local prompt="$1" default="$2" result=""
     if [ -n "$default" ]; then
-        echo -ne "  ${MAGENTA}▸${NC} ${prompt} ${YELLOW}[${default}]${NC}: "
-        read -r result
+        echo -ne "  ${MAGENTA}▸${NC} ${prompt} ${YELLOW}[${default}]${NC}: " >/dev/tty
+        read -r result </dev/tty
         echo "${result:-$default}"
     else
-        echo -ne "  ${MAGENTA}▸${NC} ${prompt}: "
-        read -r result
+        echo -ne "  ${MAGENTA}▸${NC} ${prompt}: " >/dev/tty
+        read -r result </dev/tty
         echo "$result"
     fi
 }
 
 ask_secret() {
     local prompt="$1" default="$2" result=""
-    echo -ne "  ${MAGENTA}▸${NC} ${prompt} ${YELLOW}[${default}]${NC}: "
-    read -rs result
-    echo ""
+    echo -ne "  ${MAGENTA}▸${NC} ${prompt} ${YELLOW}[${default}]${NC}: " >/dev/tty
+    read -rs result </dev/tty
+    echo "" >/dev/tty
     echo "${result:-$default}"
 }
 
 ask_yn() {
     local prompt="$1" default="$2" result=""
     while true; do
-        echo -ne "  ${MAGENTA}▸${NC} ${prompt} ${YELLOW}[${default}]${NC}: "
-        read -r result
+        echo -ne "  ${MAGENTA}▸${NC} ${prompt} ${YELLOW}[${default}]${NC}: " >/dev/tty
+        read -r result </dev/tty
         result="${result:-$default}"
         case "${result,,}" in
             y|yes) echo "yes"; return ;;
@@ -328,6 +330,7 @@ cat > /etc/turnserver.conf << EOF
 # CoTURN Configuration
 # Server: $SERVER_IP
 # Generated: $(date '+%Y-%m-%d %H:%M:%S')
+# By: CoTurn WebRTC Installer v$VERSION
 # ============================================
 
 # ── Network ──
